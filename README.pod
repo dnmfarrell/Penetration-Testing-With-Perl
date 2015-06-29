@@ -1,0 +1,17 @@
+=pod
+
+=encoding utf8
+
+=head2 Penetration-Testing-With-Perl
+
+This project is a collection of the programs in the book L<Penetration Testing With Perl|https://www.packtpub.com/networking-and-servers/penetration-testing-perl-raw> by Douglas Berdeaux
+
+I'm adding the programs as I work through the book, refactoring as I go.
+
+=head2 LICENSE
+
+(C) David Farrell 2015
+
+Licensed under the FreeBSD license, see LICENSE
+
+=cut

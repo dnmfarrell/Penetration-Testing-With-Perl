@@ -1,0 +1,68 @@
+#!/usr/bin/env perl
+########################################################
+# Adapted from Penetration Testing With Perl           #
+# by Douglas Berdeaux                                  #
+# Chapter 3 IEEE 802.3 Wired Network Mapping with Perl #
+########################################################
+
+=head2 SYNOPSIS
+
+  $ sudo $(which perl) ./livehost_scanner
+
+=cut
+
+use strict;
+use warnings;
+use feature 'say';
+use Net::ARP;
+use Net::Frame::Device;
+use Net::Frame::Dump::Online;
+use Net::Frame::Simple;
+use Net::Netmask;
+use Net::Pcap ();
+
+my $network_device_name = Net::Pcap::pcap_lookupdev(\my $error_msg);
+die "pcap device lookup failed $error_msg\n"
+  if $error_msg || not defined $network_device_name;
+
+my $device = Net::Frame::Device->new(dev => $network_device_name);
+my $ip = $device->ip;
+my $gateway = $device->gatewayIp;
+my $netmask = Net::Netmask->new($device->subnet);
+my $mac = $device->mac;
+my $netblock = $ip . ":" . $netmask->mask();
+my $filterStr = "arp and dst host ".$ip;
+my $pcap = Net::Frame::Dump::Online->new(
+  dev => $network_device_name,
+  filter => $filterStr,
+  promisc => 0,
+  unlinkOnStop => 1,
+  timeoutOnNext => 10 # waiting for ARP responses
+);
+$pcap->start;
+say "Gateway IP: $gateway\nStarting scan";
+
+for my $ipts ($netmask->enumerate)
+{
+  Net::ARP::send_packet(
+    $network_device_name,
+    $ip,
+    $ipts,
+    $mac,
+    "ff:ff:ff:ff:ff:ff", # broadcast
+    "request"
+  );
+}
+
+until ($pcap->timeout)
+{
+  if (my $next = $pcap->next)
+  { # frame according to $filterStr
+    my $fref = Net::Frame::Simple->newFromDump($next);
+    # we don't have to worry about the operation codes 1, or 2
+    # because of the $filterStr
+    say $fref->ref->{ARP}->srcIp," is alive";
+  }
+}
+
+END { say "Exiting"; $pcap->stop; }
