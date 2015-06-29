@@ -7,7 +7,16 @@
 
 =head2 SYNOPSIS
 
-  $ sudo $(which perl) ./livehost_scanner [device_name]
+This program detects live hosts on the network the computer is on.
+
+Run with system Perl:
+
+  $ sudo ./livehost_scanner [device name]
+
+
+Run with plenv or perlbrew:
+
+  $ sudo $(which perl) livehost_scanner [device_name]
 
 =cut
 
