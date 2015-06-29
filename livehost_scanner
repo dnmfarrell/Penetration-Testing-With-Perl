@@ -7,7 +7,7 @@
 
 =head2 SYNOPSIS
 
-  $ sudo $(which perl) ./livehost_scanner
+  $ sudo $(which perl) ./livehost_scanner [device_name]
 
 =cut
 
@@ -21,33 +21,38 @@ use Net::Frame::Simple;
 use Net::Netmask;
 use Net::Pcap ();
 
-my $network_device_name = Net::Pcap::pcap_lookupdev(\my $error_msg);
-die "pcap device lookup failed $error_msg\n"
-  if $error_msg || not defined $network_device_name;
+my $network_device_name = $ARGV[0] if @ARGV;
+
+unless ($network_device_name)
+{
+  $network_device_name = Net::Pcap::pcap_lookupdev(\my $error_msg);
+  die "pcap device lookup failed " . ($error_msg || '')
+    if $error_msg || not defined $network_device_name;
+}
 
 my $device = Net::Frame::Device->new(dev => $network_device_name);
 my $ip = $device->ip;
 my $gateway = $device->gatewayIp;
 my $netmask = Net::Netmask->new($device->subnet);
 my $mac = $device->mac;
-my $netblock = $ip . ":" . $netmask->mask();
-my $filterStr = "arp and dst host ".$ip;
+
 my $pcap = Net::Frame::Dump::Online->new(
   dev => $network_device_name,
-  filter => $filterStr,
+  filter => "arp and dst host $ip",
   promisc => 0,
   unlinkOnStop => 1,
-  timeoutOnNext => 10 # waiting for ARP responses
+  timeoutOnNext => 10
 );
-$pcap->start;
-say "Gateway IP: $gateway\nStarting scan";
 
-for my $ipts ($netmask->enumerate)
+say "Gateway IP: $gateway\nStarting scan";
+$pcap->start;
+
+for my $ip_address ($netmask->enumerate)
 {
   Net::ARP::send_packet(
     $network_device_name,
     $ip,
-    $ipts,
+    $ip_address,
     $mac,
     "ff:ff:ff:ff:ff:ff", # broadcast
     "request"
@@ -57,12 +62,11 @@ for my $ipts ($netmask->enumerate)
 until ($pcap->timeout)
 {
   if (my $next = $pcap->next)
-  { # frame according to $filterStr
-    my $fref = Net::Frame::Simple->newFromDump($next);
-    # we don't have to worry about the operation codes 1, or 2
-    # because of the $filterStr
-    say $fref->ref->{ARP}->srcIp," is alive";
+  {
+    my $frame = Net::Frame::Simple->newFromDump($next);
+    say $frame->ref->{ARP}->srcIp," is alive";
   }
 }
 
-END { say "Exiting"; $pcap->stop; }
+say "Exiting";
+$pcap->stop;
