@@ -11,7 +11,7 @@ This program scans the subnet mask the host machine is on attempting to identify
 
 Run with system Perl:
 
-  $ ./livehost_scanner [device name]
+  $ ./netbios_scanner [device name]
 
 =cut
 
