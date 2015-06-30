@@ -1,0 +1,45 @@
+#!/usr/bin/env perl
+########################################################
+# Adapted from Penetration Testing With Perl           #
+# by Douglas Berdeaux                                  #
+# Chapter 3 IEEE 802.3 Wired Network Mapping with Perl #
+########################################################
+
+=head2 SYNOPSIS
+
+This program is a Server Message Block scanner that looks for shared Microsoft directories on the network. It parses the results of the C<smbtree> utility.
+
+  $ ./smb_scanner
+
+=cut
+
+use strict;
+use warnings;
+use feature 'say';
+
+my $protected_shared_count = 0;
+my $shared_count = 0;
+
+for (`smbtree -N`)
+{
+  if(/^[0-9A-Z]/) # it's a group name
+  {
+    print "GROUP: $_";
+  }
+  elsif (/\s+\\\\[^\\]+\\([^ ]+).*/) # it's a shared drive
+  {
+    say "\t$1";
+
+    # trailing dollar sign indicates protected drive
+    $protected_shared_count++ if $1 =~ /\$$/;
+    $shared_count++;
+  }
+  elsif (/\s+\\\\([^\\]+)\n$/)
+  {
+    say "MACHINE: $1";
+  }
+}
+END
+{
+  say "\nShares: $shared_count Protected: $protected_shared_count";
+}

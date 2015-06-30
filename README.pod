@@ -8,6 +8,18 @@ This project is a collection of the programs in the book L<Penetration Testing W
 
 I'm adding the programs as I work through the book, refactoring as I go.
 
+=head2 PRE-REQS
+
+These programs require a number C libraries:
+
+=over 2
+
+=item * libpcap, libpcap-devel (Fedora/RHEL/CentOS package names)
+
+=item * arpack, arpack-devel (Fedora/RHEL/CentOS package names)
+
+=item * smbtree
+
 =head2 LICENSE
 
 (C) David Farrell 2015

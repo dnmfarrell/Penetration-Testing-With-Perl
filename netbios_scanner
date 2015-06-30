@@ -1,0 +1,45 @@
+#!/usr/bin/env perl
+########################################################
+# Adapted from Penetration Testing With Perl           #
+# by Douglas Berdeaux                                  #
+# Chapter 3 IEEE 802.3 Wired Network Mapping with Perl #
+########################################################
+
+=head2 SYNOPSIS
+
+This program scans the subnet mask the host machine is on attempting to identify other hosts.
+
+Run with system Perl:
+
+  $ ./livehost_scanner [device name]
+
+=cut
+
+use strict;
+use warnings;
+use NetworkInfo::Discovery::NetBIOS;
+use Net::Frame::Device;
+use Net::Pcap;
+
+my $network_device_name = $ARGV[0] if @ARGV;
+
+unless ($network_device_name)
+{
+  $network_device_name = Net::Pcap::pcap_lookupdev(\my $error_msg);
+  die "pcap device lookup failed " . ($error_msg || '')
+    if $error_msg || not defined $network_device_name;
+}
+
+
+my $cidr    = Net::Frame::Device->new(dev => $network_device_name)->subnet;
+my $scanner = NetworkInfo::Discovery::NetBIOS->new(hosts => $cidr);
+
+print "Running scan using network device $network_device_name\n";
+
+$scanner->do_it;
+
+for my $host ($scanner->get_interfaces)
+{
+  printf "IP: %s HOSTNAME: %s DOMAIN: %s\n",
+    $host->{ip}, $host->{netbios}{node}, $host->{netbios}{zone};
+}

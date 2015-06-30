@@ -24,6 +24,7 @@ use strict;
 use warnings;
 use feature 'say';
 use Net::ARP;
+use Net::Address::IP::Local;
 use Net::Frame::Device;
 use Net::Frame::Dump::Online;
 use Net::Frame::Simple;
@@ -73,7 +74,9 @@ until ($pcap->timeout)
   if (my $next = $pcap->next)
   {
     my $frame = Net::Frame::Simple->newFromDump($next);
-    say $frame->ref->{ARP}->srcIp," is alive";
+    my $local_ip = Net::Address::IP::Local->public;
+    my $frame_ip = $frame->ref->{ARP}->srcIp;
+    say $frame_ip . ($local_ip eq $frame_ip ? ' (this machine)' : '');
   }
 }
 
