@@ -80,5 +80,4 @@ until ($pcap->timeout)
   }
 }
 
-say "Exiting";
-$pcap->stop;
+END { say "Exiting"; $pcap->stop }
