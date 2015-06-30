@@ -41,31 +41,28 @@ unless ($network_device_name)
 }
 
 my $device = Net::Frame::Device->new(dev => $network_device_name);
-my $ip = $device->ip;
-my $gateway = $device->gatewayIp;
-my $netmask = Net::Netmask->new($device->subnet);
-my $mac = $device->mac;
 
 my $pcap = Net::Frame::Dump::Online->new(
   dev => $network_device_name,
-  filter => "arp and dst host $ip",
+  filter => 'arp and dst host ' . $device->ip,
   promisc => 0,
   unlinkOnStop => 1,
   timeoutOnNext => 10
 );
 
-say "Gateway IP: $gateway\nStarting scan";
+printf "Gateway IP: %s\nStarting scan\n", $device->gatewayIp;
+
 $pcap->start;
 
-for my $ip_address ($netmask->enumerate)
+for my $ip_address (Net::Netmask->new($device->subnet)->enumerate)
 {
   Net::ARP::send_packet(
     $network_device_name,
-    $ip,
+    $device->ip,
     $ip_address,
-    $mac,
+    $device->mac,
     "ff:ff:ff:ff:ff:ff", # broadcast
-    "request"
+    "request",
   );
 }
 
@@ -80,4 +77,4 @@ until ($pcap->timeout)
   }
 }
 
-END { say "Exiting"; $pcap->stop }
+END { say "Exiting."; $pcap->stop }
