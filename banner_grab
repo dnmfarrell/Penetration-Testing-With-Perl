@@ -1,0 +1,73 @@
+#!/usr/bin/env perl
+########################################################
+# Adapted from Penetration Testing With Perl           #
+# by Douglas Berdeaux                                  #
+# Chapter 3 IEEE 802.3 Wired Network Mapping with Perl #
+########################################################
+
+=head2 SYNOPSIS
+
+This program "banner grabs" a target host's ports, submitting HEAD requests and printing the results.
+
+  $ ./banner_grab <host> <protocol type> <comma separated ports> <timeout secs>
+
+Example:
+
+  $ ./banner_grab 192.168.1.1 tcp 20,22,80,436,8080 5
+
+=cut
+
+use strict;
+use warnings;
+use feature 'say';
+use IO::Socket::INET;
+
+my ($host, $proto, $ports, $timeout) = @ARGV;
+
+die "./banner_grab <host> <protocol type> <comma separated ports> <timeout seconds>\n"
+  unless $host && $proto && $ports && $timeout;
+
+my $ports_counter           = 0;
+my $connected_ports_counter = 0;
+my $errored_ports_counter   = 0;
+
+for my $port (split /,\s*/, $ports)
+{
+  say "banner grabbing : $port";
+
+  eval
+  {
+    local $SIG{ALRM} = sub { $errored_ports_counter++; die; };
+    alarm($timeout);
+
+    my $socket = IO::Socket::INET->new(
+      PeerAddr => $host,
+      PeerPort => $port,
+      Proto    => $proto,
+    );
+
+    if ($socket)
+    {
+      my $request = "HEAD / HTTP/1.1\n\n\n\n";
+      print $socket $request;
+      print "\n";
+      while (my $line = <$socket>) { say $line }
+      print "\n";
+      close $socket;
+      $connected_ports_counter++;
+    }
+    else
+    {
+      $errored_ports_counter++;
+      say "couldn't connect to port: $port";
+    }
+    alarm(0);
+  };
+  warn "$port timeout exceeded" if $@;
+  $ports_counter++;
+}
+END
+{
+  printf "%s tested, %s connected successfully, %s ports unsuccessful\n",
+    scalar $ports_counter, $connected_ports_counter, $errored_ports_counter;
+}
