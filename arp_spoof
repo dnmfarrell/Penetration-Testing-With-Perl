@@ -12,11 +12,11 @@ the machine running this program.
 
 Run with system Perl:
 
-  $ sudo ./arp_spoof <target ip address>
+  $ sudo ./arp_spoof <target ip address> <target mac address>
 
 Run with plenv or perlbrew:
 
-  $ sudo $(which perl) arp_spoof <target ip address>
+  $ sudo $(which perl) arp_spoof <target ip address> <target mac address>
 
 =cut
 
@@ -29,8 +29,8 @@ use Net::Frame::Dump::Online;
 use Net::Frame::Simple;
 use Net::Pcap;
 
-my $target_ip = $ARGV[0] or die "Usage\n\t./arp_spoof <target_ip>\n";
-my $target_mac = Net::Frame::Device->new(target => $target_ip)->mac;
+die "Usage\n\t./arp_spoof <target_ip> <target_mac>\n" unless @ARGV == 2;
+my ($target_ip, $target_mac) = @ARGV;
 
 my ($filter, $net, $mask) = ("") x 3;
 
