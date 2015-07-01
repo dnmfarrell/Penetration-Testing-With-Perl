@@ -70,10 +70,11 @@ until ($pcap->timeout)
 {
   if (my $next = $pcap->next)
   {
-    my $frame = Net::Frame::Simple->newFromDump($next);
-    my $local_ip = Net::Address::IP::Local->public;
-    my $frame_ip = $frame->ref->{ARP}->srcIp;
-    say $frame_ip . ($local_ip eq $frame_ip ? ' (this machine)' : '');
+    my $frame     = Net::Frame::Simple->newFromDump($next);
+    my $local_ip  = Net::Address::IP::Local->public;
+    my $frame_ip  = $frame->ref->{ARP}->srcIp;
+    my $frame_mac = $frame->ref->{ARP}->src;
+    say "$frame_ip $frame_mac". ($local_ip eq $frame_ip ? ' (this machine)' : '');
   }
 }
 
