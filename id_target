@@ -16,7 +16,8 @@ use warnings;
 
 my $target_mac = shift or die "Usage\n\t./id_target <target_mac>\n";
 
-printf "Address: %s, MAC Manufacturer: %s\n", $target_mac, oui_lookup($target_mac);
+printf "Address: %s, MAC Manufacturer: %s\n",
+  $target_mac, oui_lookup($target_mac);
 
 sub oui_lookup
 {
