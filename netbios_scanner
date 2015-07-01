@@ -7,11 +7,23 @@
 
 =head2 SYNOPSIS
 
-This program scans the subnet mask the host machine is on attempting to identify other hosts.
+This program scans the subnet mask the host machine is on attempting to
+identify other hosts.
 
-Run with system Perl:
+Usage:
 
   $ ./netbios_scanner [device name]
+
+Examples:
+
+  $ ./netbios_scanner
+  $ ./netbios_scanner eth0
+  $ ./netbios_scanner wlp2s0
+
+If you have more than one network device (like a USB wireless card), use the
+C<ifconfig> terminal program to discover the names of them. If no device name
+is provided, the program will lookup the network device name with
+C<libpcap>.
 
 =cut
 
@@ -29,7 +41,6 @@ unless ($network_device_name)
   die "pcap device lookup failed " . ($error_msg || '')
     if $error_msg || not defined $network_device_name;
 }
-
 
 my $cidr    = Net::Frame::Device->new(dev => $network_device_name)->subnet;
 my $scanner = NetworkInfo::Discovery::NetBIOS->new(hosts => $cidr);

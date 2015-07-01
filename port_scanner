@@ -6,7 +6,6 @@
 ########################################################
 use warnings;
 use strict;
-use 5.18.2;
 use List::Util qw(shuffle);
 use Net::Address::IP::Local;
 use Net::Pcap;
@@ -23,7 +22,6 @@ my ($target_ip, $port_range, $reqType, $pause) = @ARGV;;
 my $my_port = 55378;
 $port_range =~ /([0-9]+)-([0-9]+)/;
 my @port_ranges = $1..$2;
-my $mac_manufacturer;
 
 my ($ports, $open, $closed, $filtered) = (0, 0, 0, 0);
 
@@ -84,7 +82,6 @@ sub sniffPacket
       my $eth = NetPacket::Ethernet::strip($packet);
       my $ethdec = NetPacket::Ethernet->decode($packet);
       my $tcp = NetPacket::TCP->decode(NetPacket::IP::strip($eth));
-      say $mac_manufacturer = oui_lookup($ethdec->{'src_mac'}) unless $mac_manufacturer;
 
       if($tcp->{'flags'} == 18)
       {
@@ -139,28 +136,3 @@ sub send_packet
   $packet->send;
   return undef;
 }
-
-=head2 oui_lookup ($mac_address)
-
-Takes a hexadecimal mac address and attempts to match it against a manufacturer in F<data/oui.txt> from L<ieee.org>. Returns a string of the manufacturer name, or the string C<unknown>.
-
-=cut
-
-sub oui_lookup
-{
-  my $mac = shift;
-  $mac =~ /([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/;
-  my $mac_bytes = "$1:$2:$3:$4:$5:$6";
-  open (my $oui_file, '<', 'data/oui.txt') or die $!;
-  while (my $line = <$oui_file>)
-  {
-    if($line =~ /$1-$2-$3/i)
-    {
-      my ($address, $manufacturer_name) = split /\t+/, $line;
-      return "$mac_bytes MAC Manufacturer: $manufacturer_name";
-      last;
-    }
-  }
-  return 'unknown';
-}
-

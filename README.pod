@@ -20,6 +20,11 @@ These programs require a number C libraries:
 
 =item * smbtree
 
+Several of the Perl modules would not install because of test failures. I just
+force installed them with C<cpanm>:
+
+  $ cpanm -f Module::Name
+
 =head2 LICENSE
 
 (C) David Farrell 2015
