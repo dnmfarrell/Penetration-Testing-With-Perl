@@ -25,6 +25,8 @@ force installed them with C<cpanm>:
 
   $ cpanm -f Module::Name
 
+=back
+
 =head2 LICENSE
 
 (C) David Farrell 2015
