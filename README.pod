@@ -10,7 +10,7 @@ I'm adding the programs as I work through the book, refactoring as I go.
 
 =head2 PRE-REQS
 
-These programs require a number C libraries:
+Some of these programs require C libraries:
 
 =over 2
 

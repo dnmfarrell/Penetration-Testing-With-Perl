@@ -1,0 +1,52 @@
+#!/usr/bin/env perl
+
+=head1 NAME
+
+tcp_sniffer - creates a listening socket on the TCP port and prints out received packet headers
+
+=head2 SYNOPSIS
+
+Start traffic on the TCP port, e.g.
+
+  $ ping somewhere.com
+
+Start listening
+
+  $ sudo tcp_sniffer
+
+  Protocol ICMP 104.20.12.37 -> 192.168.1.2
+  Protocol ICMP 104.20.12.37 -> 192.168.1.2
+  Protocol ICMP 104.20.12.37 -> 192.168.1.2
+  Protocol ICMP 104.20.12.37 -> 192.168.1.2
+  Protocol ICMP 104.20.12.37 -> 192.168.1.2
+
+=cut
+
+use autodie;
+use strict;
+use warnings;
+use Socket ':all';
+use NetPacket::IP;
+
+my $tcp_port = getservbyname('echo', 'tcp');
+my %protocol_map = qw(1 ICMP 6 TCP 17 UDP);
+
+# setup and bind a socket to the TCP port
+socket(my $sniffer, AF_INET, SOCK_RAW, IPPROTO_ICMP);
+setsockopt($sniffer, IPPROTO_IP, IP_HDRINCL, 1);
+bind($sniffer, pack_sockaddr_in($tcp_port, INADDR_ANY));
+
+# continually check the socket for received packets
+# and decode them with NetPacket::IP
+while (1)
+{
+  if (recv($sniffer, my $received_bytes, 65565, 0))
+  {
+    my $ip = NetPacket::IP->decode($received_bytes);
+
+    printf "Protocol %s %s -> %s\n",
+      ($protocol_map{ $ip->{proto} or 'Unknown' }),
+      $ip->{src_ip},
+      $ip->{dest_ip};
+  }
+}
