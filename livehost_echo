@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+
+=head1 NAME
+
+livehost_echo - broadcast an ICMP echo request and display the responses using core Perl only
+
+=head1 SYNOPSIS
+
+This program uses a raw socket and usually requires root privileges to run:
+
+  $ sudo livehost_echo
+
+Or if you use C<plenv> or C<perlbrew>:
+
+  $ sudo $(which perl) livehost_echo
+
+=cut
+
+use strict;
+use warnings;
+use Socket;
+use Net::Ping;
+
+# the checksum must be correct else hosts will ignore the request
+my $msg_checksum = Net::Ping->checksum(pack("C2 n3",8,0,0,0,1));
+my $msg = pack("C2 n3", 8, 0, $msg_checksum, 0, 1);
+
+socket(my $socket, AF_INET, SOCK_RAW, getprotobyname('icmp'));
+setsockopt($socket, SOL_SOCKET, SO_BROADCAST, 1);
+send($socket, $msg, 0, sockaddr_in(0, inet_aton('255.255.255.255')));
+bind($socket,sockaddr_in(0,inet_aton(0)));
+
+while (1)
+{
+  my $addr = recv($socket, my $data, 1024, 0);
+  my ($tmp, $tos, $len, $id, $offset, $tt, $proto, $checksum,
+    $src_ip, $dest_ip, $options) = unpack('CCnnnCCnNNa*', $data);
+
+  if ($dest_ip != 4294967295) # destination != 255.255.255.255
+  {
+    my ($port, $peer) = sockaddr_in($addr);
+    printf "%s bytes from %s\n", length($data), inet_ntoa($peer);
+  }
+}
