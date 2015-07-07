@@ -1,0 +1,47 @@
+#!/usr/bin/env perl
+
+=head1 NAME
+
+  livehost_ping - ping every address in subnet to discover hosts
+
+=head1 SYNOPSIS
+
+  livehost_ping <subnet mask> [tcp|udp|icmp]
+
+Examples
+
+  $ ./livehost_ping 192.168.1.0/24
+  Starting scan
+  192.168.1.2
+  192.168.1.5
+  192.168.1.6
+  192.168.1.9
+
+  $ ./livehost_ping 192.168.1.0/24 udp
+  ...
+
+=cut
+
+use strict;
+use warnings;
+use Net::Ping;
+use Net::Netmask;
+
+die "Usage:\n\tlivehost_ping <subnet mask> [tcp|udp|icmp]\n"
+  unless @ARGV;
+
+my $netmask = Net::Netmask->new2(shift) or die Net::Netmask::errstr;
+my $sender  = Net::Ping->new(shift || 'tcp');
+
+print "Starting scan\n";
+for my $ip_address ($netmask->enumerate)
+{
+  my $parent = fork();
+  unless ($parent)
+  {
+    print "$ip_address\n" if $sender->ping($ip_address);
+    exit 0;
+  }
+}
+# wait on forked processes to finish
+until (wait() == -1) {};
