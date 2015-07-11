@@ -1,0 +1,45 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use File::Fetch;
+use Cwd;
+
+# accept location from args or use cwd
+my $location = shift || getcwd;
+
+#print help if requested
+if ($location && $location =~ /^(?:-h|--help)$/)
+{
+  print "\nUsage\n\tupdate-oui [/path/to/save/oui.txt]\n\n";
+  exit 0;
+}
+
+print "Fetching oui.txt, this may take a while ...\n";
+
+my $fetcher = File::Fetch->new(uri => 'http://standards-oui.ieee.org/oui.txt');
+my $where = $fetcher->fetch(to => $location) or die $fetcher->error;
+
+printf "Successfully fetched %s and saved to %s\n", $fetcher->output_file, $where;
+
+
+=head1 NAME
+
+update-oui - Perl script to download the latest oui.txt from IEEE.org
+
+=head1 SYNOPSIS
+
+  $ ./update-oui save/it/here/oui.txt
+
+Or download to current directory:
+
+  $ ./update-oui
+
+=head1 AUTHOR
+
+David Farrell, (C) 2015
+
+=head1 SEE ALSO
+
+L<get-oui|https://github.com/royhills/arp-scan/blob/master/get-oui> part of the C<arp-scan> distribution by Roy Hills
+
+=cut

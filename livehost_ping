@@ -36,7 +36,6 @@ die "Usage:\n\tlivehost_ping <subnet mask> [tcp|udp|icmp|syn] [timeout secs]\n"
   unless @ARGV;
 
 my $netmask = Net::Netmask->new2(shift) or die Net::Netmask::errstr;
-my $sender  = Net::Ping->new(shift || 'tcp', shift || 5); # proto, timeout
 
 print "Starting scan\n";
 for my $ip_address ($netmask->enumerate)
@@ -44,6 +43,8 @@ for my $ip_address ($netmask->enumerate)
   my $parent = fork();
   unless ($parent)
   {
+    # do this here to keep the msg sequence at 1 for each host pinged
+    my $sender  = Net::Ping->new(shift || 'tcp', shift || 5);
     if ($sender->ping($ip_address))
     {
       if ($sender->{proto} eq 'syn')

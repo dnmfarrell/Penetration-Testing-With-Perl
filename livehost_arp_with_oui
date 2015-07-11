@@ -7,25 +7,25 @@
 
 =head2 SYNOPSIS
 
-This program detects live hosts on the network the computer is on using ARP broadcast packets.
+This program detects live hosts on the network the computer is on using ARP broadcast packets and lookups up the MAC manufacturer of the livehost.
 
 Run with system Perl:
 
-  $ sudo ./livehost_scanner [device name]
+  $ sudo ./livehost_scanner_oui [device name]
 
 Run with plenv or perlbrew:
 
-  $ sudo $(which perl) livehost_scanner [device_name]
+  $ sudo $(which perl) livehost_scanner_oui [device_name]
 
 Examples
 
-  $ sudo ./livehost_scanner
+  $ sudo ./livehost_scanner_oui
   ...
 
-  $ sudo ./livehost_scanner eth0
+  $ sudo ./livehost_scanner_oui eth0
   ...
 
-  $ sudo ./livehost_scanner wlp2s0
+  $ sudo ./livehost_scanner_oui wlp2s0
   ...
 
 =head2 Tips
@@ -38,7 +38,7 @@ C<ifconfig> or C<ip addr>.
 
 use strict;
 use warnings;
-use feature 'say';
+use feature qw/say state/;
 use Net::ARP;
 use Net::Address::IP::Local;
 use Net::Frame::Device;
@@ -57,6 +57,8 @@ unless ($network_device_name)
 }
 
 my $device = Net::Frame::Device->new(dev => $network_device_name);
+my $gateway_ip = $device->gatewayIp;
+my $local_ip  = Net::Address::IP::Local->public;
 
 my $pcap = Net::Frame::Dump::Online->new(
   dev => $network_device_name,
@@ -66,7 +68,7 @@ my $pcap = Net::Frame::Dump::Online->new(
   timeoutOnNext => 10
 );
 
-printf "Gateway IP: %s\nStarting scan\n", $device->gatewayIp;
+printf "Gateway IP: %s\nStarting scan\n", $gateway_ip;
 
 $pcap->start;
 
@@ -87,11 +89,43 @@ until ($pcap->timeout)
   if (my $next = $pcap->next)
   {
     my $frame     = Net::Frame::Simple->newFromDump($next);
-    my $local_ip  = Net::Address::IP::Local->public;
     my $frame_ip  = $frame->ref->{ARP}->srcIp;
     my $frame_mac = $frame->ref->{ARP}->src;
-    say "$frame_ip $frame_mac". ($local_ip eq $frame_ip ? ' (this machine)' : '');
+    my $manufacturer = oui_lookup($frame_mac);
+
+    # don't print anything if the response is from the gateway, or the local machine
+    unless ($frame_ip eq $gateway_ip || $frame_ip eq $local_ip)
+    {
+      printf "%-16s %-18s %-30s\n", $frame_ip, $frame_mac, $manufacturer;
+    }
   }
+}
+
+sub oui_lookup
+{
+  my $mac_address = shift;
+  $mac_address =~ s/:/-/g;
+  my $oui = substr $mac_address, 0, 8;
+
+  state @oui_lines; # memoize this
+
+  unless (@oui_lines)
+  {
+    open (my $oui_file, '<', 'data/oui.txt') or die $!;
+    @oui_lines = <$oui_file>;
+  }
+
+  for my $line (@oui_lines)
+  {
+    if($line =~ /$oui/i)
+    {
+      my ($address, $manufacturer_name) = split /\t+/, $line;
+      chomp $manufacturer_name;
+      return "$manufacturer_name";
+      last;
+    }
+  }
+  return "Unknown";
 }
 
 END { say "Exiting."; $pcap->stop if $pcap }

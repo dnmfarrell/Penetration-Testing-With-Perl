@@ -13,9 +13,9 @@ use Net::RawIP;
 use NetPacket::Ethernet;
 use NetPacket::IP;
 use NetPacket::TCP;
+use feature 'say';
 
-die "Usage: ./portscanner <target ip> <port-range> <timeout> <pause time>"
-unless scalar @ARGV == 4;
+die "Usage:\n\t./portscanner <target ip> <port-range> <timeout secs> <pause secs>" unless @ARGV == 4;
 
 my ($target_ip, $port_range, $reqType, $pause) = @ARGV;;
 
@@ -65,8 +65,7 @@ if ($rtr || $win)
   printf "\nOS Guess: %s\n", ($rtr > $win ? 'Router Firmware' : 'Windows OS');
 }
 
-pcap_close($pcap); # release resources
-exit;
+pcap_close($pcap) if $pcap;# release resources
 
 sub sniffPacket
 {
@@ -122,7 +121,7 @@ sub sniffPacket
 sub send_packet
 {
   my $target_port = shift;
-  my $packet = Net::RawIP->new({
+  Net::RawIP->new({
     ip => {
       saddr => Net::Address::IP::Local->public,
       daddr => $target_ip,
@@ -132,7 +131,5 @@ sub send_packet
       dest => $target_port,
       #syn => 1,
     },
-  });
-  $packet->send;
-  return undef;
+  })->send;
 }
