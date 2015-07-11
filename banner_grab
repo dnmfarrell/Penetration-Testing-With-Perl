@@ -66,8 +66,5 @@ for my $port (split /,\s*/, $ports)
   warn "$port timeout exceeded" if $@;
   $ports_counter++;
 }
-END
-{
-  printf "%s tested, %s connected successfully, %s ports unsuccessful\n",
-    scalar $ports_counter, $connected_ports_counter, $errored_ports_counter;
-}
+printf "%s tested, %s connected successfully, %s ports unsuccessful\n",
+  scalar $ports_counter, $connected_ports_counter, $errored_ports_counter;
