@@ -6,18 +6,18 @@
 
 =head1 SYNOPSIS
 
-  livehost_ping <subnet mask> [tcp|udp|icmp]
+  livehost_ping <CIDR> [tcp|udp|icmp|syn] [timeout secs]
 
 Examples
 
   $ ./livehost_ping 192.168.1.0/24
   Starting scan
-  192.168.1.2
-  192.168.1.5
-  192.168.1.6
-  192.168.1.9
+    192.168.1.2
+    192.168.1.5
+    192.168.1.6
+    192.168.1.9
 
-  $ ./livehost_ping 192.168.1.0/24 udp
+  $ ./livehost_ping 192.168.1.0/24 udp 3
   ...
 
 =cut
@@ -26,12 +26,13 @@ use strict;
 use warnings;
 use Net::Ping;
 use Net::Netmask;
+use POSIX 'WNOHANG';
 
-die "Usage:\n\tlivehost_ping <subnet mask> [tcp|udp|icmp]\n"
+die "Usage:\n\tlivehost_ping <subnet mask> [tcp|udp|icmp|syn] [timeout secs]\n"
   unless @ARGV;
 
 my $netmask = Net::Netmask->new2(shift) or die Net::Netmask::errstr;
-my $sender  = Net::Ping->new(shift || 'tcp');
+my $sender  = Net::Ping->new(shift || 'tcp', shift || 5); # proto, timeout
 
 print "Starting scan\n";
 for my $ip_address ($netmask->enumerate)
@@ -39,9 +40,18 @@ for my $ip_address ($netmask->enumerate)
   my $parent = fork();
   unless ($parent)
   {
-    print "$ip_address\n" if $sender->ping($ip_address);
+    if ($sender->ping($ip_address))
+    {
+      if ($sender->{proto} eq 'syn')
+      {
+        # wait for ACK response or timeout
+        exit 0 unless $sender->ack($ip_address);
+      }
+      print "  $ip_address\n";
+    }
     exit 0;
   }
 }
 # wait on forked processes to finish
-until (wait() == -1) {};
+until (waitpid(-1, WNOHANG) == -1) {};
+print "Exiting\n";
