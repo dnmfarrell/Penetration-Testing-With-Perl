@@ -247,7 +247,7 @@ __END__
 
 =head1 NAME
 
-port_scanner - a concurrent tcp/udp port scanner
+port_scanner - a concurrent tcp syn/udp port scanner
 
 =head1 SYNOPSIS
 
@@ -263,17 +263,17 @@ port_scanner [options]
 
 =head2 Examples
 
-Search the common ports on host C<10.20.1.22>
+Search the named ports on host C<10.20.1.22>
 
   sudo ./port_scanner -i 10.20.1.22
-
-Search a defined range of ports on host C<10.20.1.22>
-
-  sudo ./port_scanner --ip 10.20.1.22 --range 1-1450
 
 Use local Perl installed with perlbrew or plenv
 
   sudo $(which perl) port_scanner -i 10.20.1.22
+
+Search a defined range of ports on host C<10.20.1.22>
+
+  sudo ./port_scanner --ip 10.20.1.22 --range 1-1450
 
 Make 5 requests every 2 seconds on ports 20 through 80, print all results
 
