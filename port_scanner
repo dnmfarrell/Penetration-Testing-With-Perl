@@ -6,130 +6,285 @@
 ########################################################
 use warnings;
 use strict;
-use List::Util qw(shuffle);
+use Getopt::Long;
 use Net::Address::IP::Local;
 use Net::Pcap;
 use Net::RawIP;
 use NetPacket::Ethernet;
+use NetPacket::ICMP;
 use NetPacket::IP;
 use NetPacket::TCP;
-use feature 'say';
+use NetPacket::UDP;
+use POSIX qw/WNOHANG ceil/;
+use Pod::Usage;
+$SIG{INT} = $SIG{TERM} = sub { exit 0 }; # orderly shutdown when signals received
 
-die "Usage:\n\t./portscanner <target ip> <port-range> <timeout secs> <pause secs>" unless @ARGV == 4;
-
-my ($target_ip, $port_range, $reqType, $pause) = @ARGV;;
-
-my $my_port = 55378;
-$port_range =~ /([0-9]+)-([0-9]+)/;
-my @port_ranges = $1..$2;
-
-my ($ports, $open, $closed, $filtered) = (0, 0, 0, 0);
-
-# most commonly used ports first:
-my $common_ports = qr/^(?:20|21|23|25|42|53|67|68|69|80|88|102|110|119|135|137|138|139|143|161|162|389|443|445|464|500|515|522|531|543|544|548|554|560|563|568|569|636|993|995|1024|1234|1433|1500|1503|1645|1646|1701|1720|1723|1731|1801|1812|1813|2053|2101|2103|2105|2500|2504|3389|3527|5000|6665|6667|8000|8001|8002)$/;
-
-my %winports = (
-  135 => 'msrpc',
-  139 => 'netbios-ssn',
-  445 => 'microsoft-ds',
-  554 => 'rtsp',
- 2869 => 'icslap',
- 5357 => 'wsdapi',
+GetOptions (
+  'delay=i'     => \my $delay,
+  'h|help|?'    => sub { pod2usage(2) },
+  'ip=s'        => \my $target_ip,
+  'range=s'     => \my $port_range,
+  'procs=i'     => \my $procs,
+  'type=s'      => \my $type,
+  'verbose'     => \my $verbose,
 );
 
-my %rtrports = (
-   80 => 'http',
-  443 => 'https',
- 8080 => 'http-proxy',
- 5000 => 'upnp',
- 8888 => 'sun-answerbook'
+# determine protocol to use
+$type = 'tcp' unless $type;
+my %protocol_handlers = (
+  tcp => {
+    sender => sub { send_tcp_packet(@_) },
+  },
+  udp => {
+    sender => sub { send_udp_packet(@_) },
+  },
 );
+die "Unknown protocol type, try tcp or udp\n" 
+  unless exists $protocol_handlers{$type};
 
-my ($win, $rtr) = (0, 0);
-my ($net, $mask, $filter, $packet);
-my $device_name = pcap_lookupdev(\my $err);
-pcap_lookupnet($device_name, \$net, \$mask, \$err);
-my $pcap = pcap_open_live($device_name, 1024, 0, 1000, \$err);
-pcap_compile($pcap, \$filter,"(src net $target_ip) && (dst port $my_port)", 0, $mask);
-pcap_setfilter($pcap,$filter);
-my %header;
+# validate required args are given
+die "Missing --ip parameter, try --help\n" unless $target_ip;
 
-# common ports first:
-&sniffPacket($_) foreach(shuffle(grep(/$common_ports/,@port_ranges)));
-&sniffPacket($_) foreach(shuffle(grep(!/$common_ports/,@port_ranges)));
+die "ip: $target_ip is not a valid ipv4 address\n"
+  unless $target_ip =~ /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/;
 
-say "\n $ports ports scanned, $filtered filtered, $open open";
-
-if ($rtr || $win)
+# build the port list
+my %port_directory;
+open my $port_file, '<', 'data/nmap-services.txt'
+  or die "Error reading data/nmap-services.txt $!\n";
+while (<$port_file>)
 {
-  printf "\nOS Guess: %s\n", ($rtr > $win ? 'Router Firmware' : 'Windows OS');
+  next if /^#/; # skip comments
+  chomp;
+  my ($name, $number_protocol, $probability, $comments) = split /\t/;
+  my ($port, $proto) = split /\//, $number_protocol;
+
+  $port_directory{$number_protocol} = {
+    port        => $port,
+    proto       => $proto,
+    name        => $name,
+    probability => $probability,
+    comments    => $comments,
+  };
 }
 
-pcap_close($pcap) if $pcap;# release resources
-
-sub sniffPacket
-{
-  sleep($pause);
-  $ports++;
-  my $port = shift;
-  send_packet($port); # send the TCP request
-  while(1)
+# use named ports if no range was provided
+my @ports = do {
+  unless ($port_range)
   {
-    my $pktRef = pcap_next_ex($pcap,\%header,\$packet);
-    if($pktRef == 1)
-    { # we've got a packet:
-      my $eth = NetPacket::Ethernet::strip($packet);
-      my $ethdec = NetPacket::Ethernet->decode($packet);
-      my $tcp = NetPacket::TCP->decode(NetPacket::IP::strip($eth));
-
-      if($tcp->{'flags'} == 18)
-      {
-        $open++;
-        print $port,"\topen\t";
-        if (exists $rtrports{$_})
-        {
-          print $rtrports{$_}; $rtr++;
-        }
-        elsif (exists $winports{$_})
-        {
-          print $winports{$_}; $win++; 
-        }
-        else
-        {
-          print "unknown port."
-        }
-        print "\n";
-      }
-      elsif($tcp->{'flags'} == 20)
-      {
-        last; # found response, next ip
-      }
-    }
-    elsif($pktRef == 0)
-    {
-      $filtered++; # filtered port from no response.
-      last; # found response, next ip
-    }
-    else
-    {
-      print "packets error!\n";
-    }
+    map { $port_directory{$_}->{port} }
+      grep { $port_directory{$_}->{name} !~ /^unknown$/
+             && $port_directory{$_}->{proto} eq $type } keys %port_directory;
   }
-  return undef;
+  else
+  {
+    my ($min, $max) = $port_range =~ /([0-9]+)-([0-9]+)/
+      or die "port-range must be formatted like this: 100-1000\n";
+    $min..$max;
+  }
+};
+
+my $local_ip   = Net::Address::IP::Local->public;
+my $local_port = 55378; # should assign this per child proc, maybe change every req
+
+print "Starting $type scan\n";
+
+# apportion the ports to scan between processes
+$procs ||= 1;
+my $batch_size = ceil(@ports / $procs);
+$delay //= 1; # incase of zero delay
+my $total_ports = @ports; # for reporting
+my @child_pids;
+
+for (1..$procs)
+{
+  my @ports_to_scan = splice @ports, 0, $batch_size;
+  my $parent = fork;
+  die "unable to fork!\n" unless defined ($parent);
+
+  if ($parent)
+  {
+    push(@child_pids, $parent);
+    next;
+  }
+
+  # child waits until the parent signals to continue
+  my $continue = 0;
+  local $SIG{CONT} = sub { $continue = 1};
+  until ($continue) {}
+
+  for (@ports_to_scan)
+  {
+    sleep($delay);
+    $protocol_handlers{$type}->{sender}->($_);
+  }
+  exit 0; # exit child
 }
 
-sub send_packet
+# setup parent packet capture
+my $device_name = pcap_lookupdev(\my $err);
+pcap_lookupnet($device_name, \my $net, \my $mask, \$err);
+my $pcap = pcap_open_live($device_name, 1024, 0, 1000, \$err);
+pcap_compile(
+  $pcap,
+  \my $filter,
+  "(src net $target_ip) && (dst port $local_port)",
+  0,
+  $mask
+);
+pcap_setfilter($pcap,$filter);
+
+my ($open_ports_count, $closed_ports_count) = (0, 0);
+
+# ready to rock, signal the child pids to start sending
+kill CONT => $_ for @child_pids;
+
+until (waitpid(-1, WNOHANG) == -1) # until all children exit
+{
+  my $packet_capture = pcap_next_ex($pcap,\my %header,\my $packet);
+
+  if($packet_capture == 1)
+  {
+    read_packet($packet);
+  }
+  elsif ($packet_capture == -1)
+  {
+    warn "libpcap errored while reading a packet\n";
+  }
+}
+
+printf "\n %d ports scanned, %d filtered, %d closed, %d open\n",
+  $total_ports,
+  $total_ports - $closed_ports_count - $open_ports_count,
+  $closed_ports_count,
+  $open_ports_count;
+
+END { pcap_close($pcap) if $pcap }
+
+sub send_udp_packet
 {
   my $target_port = shift;
   Net::RawIP->new({
     ip => {
-      saddr => Net::Address::IP::Local->public,
+      saddr => $local_ip,
       daddr => $target_ip,
     },
-    tcp => {
-      source => $my_port,
+    udp => {
+      source => $local_port,
       dest => $target_port,
-      #syn => 1,
     },
   })->send;
 }
+
+sub send_tcp_packet
+{
+  my $target_port = shift;
+  Net::RawIP->new({
+    ip => {
+      saddr => $local_ip,
+      daddr => $target_ip,
+    },
+    tcp => {
+      source => $local_port,
+      dest => $target_port,
+      syn => 1,
+    },
+  })->send;
+}
+
+sub read_packet
+{
+  my $raw_data = shift;
+  my $ip_data = NetPacket::Ethernet::strip($raw_data);
+  my $ip_packet = NetPacket::IP->decode($ip_data);
+
+  if ($ip_packet->{proto} == 1)
+  {
+    my $icmp = NetPacket::ICMP->decode(NetPacket::IP::strip($ip_data));
+
+    if ($icmp->{code} == 3 && $icmp->{type} == 3)
+    {
+      $closed_ports_count++;
+      print "received ICMP packet from unknown closed port\n";
+    }
+    else
+    {
+      print "received ICMP packet from unknown filtered port\n";
+    }
+  }
+  elsif ($ip_packet->{proto} == 6)
+  {
+    my $tcp = NetPacket::TCP->decode(NetPacket::IP::strip($ip_data));
+    my $port = $tcp->{src_port};
+    my $port_name = exists $port_directory{"$port/tcp"}
+      ? $port_directory{"$port/tcp"}->{name}
+      : '';
+
+    if ($tcp->{flags} == 18)
+    {
+      printf " %5d %-6s %-20s\n", $port, 'open', $port_name;
+      $open_ports_count++;
+    }
+    elsif ($tcp->{flags} == 20)
+    {
+      printf " %5d %-6s %-20s\n", $port, 'closed', $port_name if $verbose;
+      $closed_ports_count++;
+    }
+  }
+  elsif ($ip_packet->{proto} == 17)
+  {
+    my $udp = NetPacket::UDP->decode(NetPacket::IP::strip($ip_data));
+    my $port = $udp->{src_port};
+    my $port_name = exists $port_directory{"$port/udp"}
+      ? $port_directory{"$port/udp"}->{name}
+      : 'unknown';
+    printf " %5d %6s %20s\n", $port, 'open', $port_name;
+    $open_ports_count++;
+  }
+}
+
+__END__
+
+=head1 NAME
+
+port_scanner - a concurrent tcp/udp port scanner
+
+=head1 SYNOPSIS
+
+port_scanner [options]
+
+ Options:
+  --ip,     -i   ip address to scan e.g. 10.30.1.52
+  --range,  -r   range of ports to scan e.g. 10-857
+  --delay,  -d   seconds to delay each packet send (per process, defaults to 1)
+  --help,   -h   display this help text
+  --verbose,-v   verbose mode
+  --procs,  -p   how many concurrent packets to send at a time (defaults to 1)
+
+=head2 Examples
+
+Search the common ports on host C<10.20.1.22>
+
+  sudo ./port_scanner -i 10.20.1.22
+
+Search a defined range of ports on host C<10.20.1.22>
+
+  sudo ./port_scanner --ip 10.20.1.22 --range 1-1450
+
+Use local Perl installed with perlbrew or plenv
+
+  sudo $(which perl) port_scanner -i 10.20.1.22
+
+Make 5 requests every 2 seconds on ports 20 through 80, print all results
+
+  sudo ./port_scanner --ip 10.22.1.22 --range 20-80 --delay 2 --procs 5 --verbose
+
+Same thing, with abbreviated parameters
+
+  sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v
+
+Same thing, with udp
+
+  sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v -t udp
+
+=cut
