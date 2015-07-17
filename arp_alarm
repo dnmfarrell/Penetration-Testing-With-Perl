@@ -104,9 +104,8 @@ sub open_pid_file
 
 sub daemonize
 {
-  die 'fork failed' unless defined (my $parent = fork);
-
   print "Starting arp_alarm\n";
+  die 'fork failed' unless defined (my $parent = fork);
 
   # parent is session leader and must exit
   # so setsid on child will work
