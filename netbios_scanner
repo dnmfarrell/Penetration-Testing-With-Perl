@@ -20,6 +20,22 @@ Examples:
   $ ./netbios_scanner eth0
   $ ./netbios_scanner wlp2s0
 
+Typical output:
+
+  Running scan using network device wlp2s0
+
+    IP             HOSTNAME           DOMAIN
+    10.0.1.5       PARKAVE            WORKGROUP
+    10.0.1.36      MACBOOKAIR-6450    N/A
+    10.0.1.39      MACBOOKAIR-DC84    N/A
+    10.0.1.61      MACBOOKAIR-BA26    N/A
+    10.0.1.74      MACBOOKPRO-EBD2    N/A
+    10.0.1.134     MACBOOKAIR-C0DA    N/A
+    10.0.1.140     MACBOOKPRO-CA3F    N/A
+    10.0.1.180     MACBOOKAIR-2CF2    N/A
+    10.0.1.184     MACBOOKAIR-7378    N/A
+    10.0.1.199     MACBOOKPRO-F6D5    N/A
+
 If you have more than one network device (like a USB wireless card), use the
 C<ifconfig> terminal program to discover the names of them. If no device name
 is provided, the program will lookup the network device name with
@@ -45,12 +61,15 @@ unless ($network_device_name)
 my $cidr    = Net::Frame::Device->new(dev => $network_device_name)->subnet;
 my $scanner = NetworkInfo::Discovery::NetBIOS->new(hosts => $cidr);
 
-print "Running scan using network device $network_device_name\n";
+printf "Running scan using network device $network_device_name
+\n %-15s %-20s %-20s\n", 'IP', 'HOSTNAME', 'DOMAIN';
 
 $scanner->do_it;
 
 for my $host ($scanner->get_interfaces)
 {
-  printf "IP: %s HOSTNAME: %s DOMAIN: %s\n",
-    $host->{ip}, $host->{netbios}{node}, $host->{netbios}{zone};
+  printf " %-15s %-20s %-20s\n",
+    $host->{ip},
+    ($host->{netbios}{node} || 'UNKNOWN'),
+    ($host->{netbios}{zone} || 'N/A'); # usually not present on OSX
 }
