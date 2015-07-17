@@ -1,0 +1,131 @@
+#!/usr/bin/env perl
+
+=head1 NAME
+
+arp_alarm - a simple ARP cache poisoning detection and notification daemon
+
+=head1 SYNOPSIS
+
+Download this file and set permissions:
+
+  $ chmod 744 arp_alarm
+
+Launch:
+
+  $ ./arp_alarm
+
+Check it's still running:
+
+  $ ps -e | grep arp_alarm
+
+Kill using signal:
+
+  $ kill -s 2 <pid>
+
+=head1 DESCRIPTION
+
+C<arp_alarm> is a Perl program that runs in the background, continuously monitoring
+the ARP table. If it finds more than one gateway, it will emit a desktop notification
+using C<notify-send>.
+
+This program has been tested on Fedora 22 only, but should work on most modern Unix-based
+systems, provided the dependences are met.
+
+=head1 DEPENDENCIES
+
+- C<arp -n>
+- libnotify (C<notify-send>)
+- Perl
+
+=head1 AUTHOR
+
+David Farrell (C) 2015
+
+=cut
+
+use warnings;
+use strict;
+use POSIX 'setsid';
+use constant PID_FILEPATH => '/var/tmp/arp_alarm.pid';
+
+# check prereqs
+die "libnotify not found! arp_alarm requires the 'notify-send' program to be installed\n"
+  unless `which notify-send 2>/dev/null`;
+
+die "arp not found! arp_alarm requires the 'arp' program to be installed\n"
+  unless `which arp 2>/dev/null`;
+
+# shutdown cleanly on SIGINT and SIGTERM
+my $RUN = 1;
+$SIG{TERM} = $SIG{INT} = sub { $RUN = 0 };
+
+my $PID = init();
+
+while ($RUN)
+{
+  my @arp_rows = `arp -n`;
+  my @headers  = split /\s+/, shift @arp_rows;
+
+  if (@arp_rows > 1)
+  {
+    # we have more than one gateway in our arp cache!
+    # notify the user
+    system 'notify-send -u critical -a arp_alarm -c network -t 5000 "Potential ARP Poisoning Detected!" "Run arp -n for details"';
+  }
+  sleep (30);
+}
+
+sub init
+{
+  my $pid_fh = open_pid_file(PID_FILEPATH);
+  my $pid    = daemonize();
+  print $pid_fh $pid;
+  close $pid_fh;
+  return $pid;
+}
+
+sub open_pid_file
+{
+  my $file = shift;
+
+  if ($file && -e $file)
+  {
+    my $pid = do {
+      open my $fh, '<', $file or die $!;
+      <$fh>;
+    };
+    die "arp_alarm already running with PID $pid\n" if kill(0, $pid);
+    warn "Removing stale PID file for PID $pid\n";
+    unlink $file or die "Error removing stale PID file: $file\n";
+  }
+  open my $pid_fh, '>', $file or die $!;
+  return $pid_fh;
+}
+
+sub daemonize
+{
+  die 'fork failed' unless defined (my $parent = fork);
+
+  print "Starting arp_alarm\n";
+
+  # parent is session leader and must exit
+  # so setsid on child will work
+  exit 0 if $parent;
+  setsid();
+
+  # disable STDIO
+  open STDIN,  "</dev/null";
+  open STDOUT, ">/dev/null";
+  open STDERR, ">/dev/null";
+
+  # reset environment
+  $0 = 'arp_alarm';
+  chdir '/';
+  umask(0);
+  $ENV{PATH} = '/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin';
+
+  # PID
+  return $$;
+}
+
+END { unlink PID_FILEPATH if $PID && $PID == $$ }
