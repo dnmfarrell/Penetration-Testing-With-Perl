@@ -25,28 +25,29 @@ GetOptions (
   'ip=s'        => \my $target_ip,
   'range=s'     => \my $port_range,
   'procs=i'     => \my $procs,
-  'type=s'      => \my $type,
+  'type=s'      => \my $protocol,
+  'flag=s'      => \my @flags,
   'verbose'     => \my $verbose,
 );
-
-# determine protocol to use
-$type = 'tcp' unless $type;
-my %protocol_handlers = (
-  tcp => {
-    sender => sub { send_tcp_packet(@_) },
-  },
-  udp => {
-    sender => sub { send_udp_packet(@_) },
-  },
-);
-die "Unknown protocol type, try tcp or udp\n" 
-  unless exists $protocol_handlers{$type};
 
 # validate required args are given
 die "Missing --ip parameter, try --help\n" unless $target_ip;
 
 die "ip: $target_ip is not a valid ipv4 address\n"
   unless $target_ip =~ /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/;
+
+my $local_ip   = Net::Address::IP::Local->public;
+my $local_port = 55378; # should assign this per child proc, maybe change every req
+
+# determine protocol to use
+$protocol = 'tcp' unless $protocol;
+die "Unknown protocol type, try tcp  or udp\n" unless $protocol =~ /^(?:tcp|udp)$/;
+
+# set flags (tcp only, default to syn if no flags provided)
+die "flags are for tcp only!\n" if $protocol ne 'tcp' && @flags;
+$flags[0] = 'syn' unless @flags;
+my $flags = { map { $_ => 1 } @flags };
+$flags = {} if exists $flags->{null};
 
 # build the port list
 my %port_directory;
@@ -74,7 +75,7 @@ my @ports = do {
   {
     map { $port_directory{$_}->{port} }
       grep { $port_directory{$_}->{name} !~ /^unknown$/
-             && $port_directory{$_}->{proto} eq $type } keys %port_directory;
+             && $port_directory{$_}->{proto} eq $protocol } keys %port_directory;
   }
   else
   {
@@ -84,16 +85,13 @@ my @ports = do {
   }
 };
 
-my $local_ip   = Net::Address::IP::Local->public;
-my $local_port = 55378; # should assign this per child proc, maybe change every req
-
-print "Starting $type scan\n";
+print "Starting $protocol scan\n";
 
 # apportion the ports to scan between processes
 $procs ||= 1;
 my $batch_size = ceil(@ports / $procs);
 $delay //= 1; # incase of zero delay
-my $total_ports = @ports; # for reporting
+my %total_ports = map { $_ => 'filtered' } @ports; # for reporting
 my @child_pids;
 
 for (1..$procs)
@@ -113,10 +111,10 @@ for (1..$procs)
   local $SIG{CONT} = sub { $continue = 1};
   until ($continue) {}
 
-  for (@ports_to_scan)
+  for my $target_port (@ports_to_scan)
   {
     sleep($delay);
-    $protocol_handlers{$type}->{sender}->($_);
+    send_packet($protocol, $target_port, $flags);
   }
   exit 0; # exit child
 }
@@ -133,8 +131,6 @@ pcap_compile(
   $mask
 );
 pcap_setfilter($pcap,$filter);
-
-my ($open_ports_count, $closed_ports_count) = (0, 0);
 
 # ready to rock, signal the child pids to start sending
 kill CONT => $_ for @child_pids;
@@ -153,43 +149,42 @@ until (waitpid(-1, WNOHANG) == -1) # until all children exit
   }
 }
 
+# if verbose mode is on, we're using tcp and DIDNT send syn/rst/ack
+# print the "filtered" ports, as they are "open/filtered"
+if ($verbose && $protocol eq 'tcp'
+    && 0 == grep { /^(?:syn|rst|ack)$/ } keys %$flags)
+{
+  for my $port (sort grep { $total_ports{$_} eq 'filtered' } keys %total_ports)
+  {
+    my $port_name = exists $port_directory{"$port/tcp"}
+      ? $port_directory{"$port/tcp"}->{name}
+      : '';
+    printf " %5d %-6s %-20s\n", $port, 'open/filtered', $port_name;
+  }
+}
+
 printf "\n %d ports scanned, %d filtered, %d closed, %d open\n",
-  $total_ports,
-  $total_ports - $closed_ports_count - $open_ports_count,
-  $closed_ports_count,
-  $open_ports_count;
+  scalar(keys %total_ports),
+  scalar(grep { $total_ports{$_} eq 'filtered' } keys %total_ports),
+  scalar(grep { $total_ports{$_} eq 'closed'   } keys %total_ports),
+  scalar(grep { $total_ports{$_} eq 'open'     } keys %total_ports);
 
 END { pcap_close($pcap) if $pcap }
 
-sub send_udp_packet
+sub send_packet
 {
-  my $target_port = shift;
-  Net::RawIP->new({
-    ip => {
-      saddr => $local_ip,
-      daddr => $target_ip,
-    },
-    udp => {
-      source => $local_port,
-      dest => $target_port,
-    },
-  })->send;
-}
+  my ($protocol, $target_port, $flags) = @_;
 
-sub send_tcp_packet
-{
-  my $target_port = shift;
-  Net::RawIP->new({
-    ip => {
-      saddr => $local_ip,
-      daddr => $target_ip,
-    },
-    tcp => {
-      source => $local_port,
-      dest => $target_port,
-      syn => 1,
-    },
-  })->send;
+  Net::RawIP->new({ ip => {
+                      saddr => $local_ip,
+                      daddr => $target_ip,
+                    },
+                    $protocol => {
+                      source => $local_port,
+                      dest   => $target_port,
+                      %$flags,
+                    },
+                  })->send;
 }
 
 sub read_packet
@@ -204,7 +199,6 @@ sub read_packet
 
     if ($icmp->{code} == 3 && $icmp->{type} == 3)
     {
-      $closed_ports_count++;
       print "received ICMP packet from unknown closed port\n";
     }
     else
@@ -220,15 +214,37 @@ sub read_packet
       ? $port_directory{"$port/tcp"}->{name}
       : '';
 
-    if ($tcp->{flags} == 18)
+    # we sent SYN, we're looking for ACK/SYN and RST
+    if (exists $flags->{syn})
     {
-      printf " %5d %-6s %-20s\n", $port, 'open', $port_name;
-      $open_ports_count++;
+      if ($tcp->{flags} & SYN)
+      {
+        printf " %5d %-6s %-20s\n", $port, 'open', $port_name;
+        $total_ports{$port} = 'open';
+      }
+      elsif ($tcp->{flags} & RST)
+      {
+        printf " %5d %-6s %-20s\n", $port, 'closed', $port_name if $verbose;
+        $total_ports{$port} = 'closed';
+      }
+      else
+      {
+        printf " %5d %-6s %-20s\n", $port, "unknown value $tcp->{flags}", $port_name if $verbose;
+      }
     }
-    elsif ($tcp->{flags} == 20)
+    # if we didnt send SYN, ACK or RST, we're looking for RST (closed)
+    # no response at all indicates open/filtered
+    unless (grep { /^(?:syn|rst|ack)$/ } keys %$flags)
     {
-      printf " %5d %-6s %-20s\n", $port, 'closed', $port_name if $verbose;
-      $closed_ports_count++;
+      if ($tcp->{flags} & RST)
+      {
+        printf " %5d %-6s %-20s\n", $port, 'closed', $port_name if $verbose;
+        $total_ports{$port} = 'closed';
+      }
+      else
+      {
+        printf " %5d %-6s %-20s\n", $port, "unknown value $tcp->{flags}", $port_name if $verbose;
+      }
     }
   }
   elsif ($ip_packet->{proto} == 17)
@@ -239,7 +255,7 @@ sub read_packet
       ? $port_directory{"$port/udp"}->{name}
       : 'unknown';
     printf " %5d %6s %20s\n", $port, 'open', $port_name;
-    $open_ports_count++;
+    $total_ports{$port} = 'open';
   }
 }
 
@@ -255,6 +271,8 @@ port_scanner [options]
 
  Options:
   --ip,     -i   ip address to scan e.g. 10.30.1.52
+  --type    -t   type of protocol to use either tcp or udp (defaults to tcp)
+  --flag    -f   flag to set on tcp (defaults to SYN, use "null" for null flags)
   --range,  -r   range of ports to scan e.g. 10-857
   --delay,  -d   seconds to delay each packet send (per process, defaults to 1)
   --help,   -h   display this help text
@@ -283,8 +301,17 @@ Same thing, with abbreviated parameters
 
   sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v
 
+Same thing, with tcp fin flag set
+
+  sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v -f fin
+
+Same thing, with tcp and no flags set (aka "null" scan)
+
+  sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v -f null
+
 Same thing, with udp
 
   sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v -t udp
 
 =cut
+
