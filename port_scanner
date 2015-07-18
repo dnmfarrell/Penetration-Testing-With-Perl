@@ -7,6 +7,7 @@
 use warnings;
 use strict;
 use Getopt::Long;
+use IO::Socket::INET;
 use Net::Address::IP::Local;
 use Net::Pcap;
 use Net::RawIP;
@@ -17,10 +18,12 @@ use NetPacket::TCP;
 use NetPacket::UDP;
 use POSIX qw/WNOHANG ceil/;
 use Pod::Usage;
+use Time::HiRes 'sleep';
+
 $SIG{INT} = $SIG{TERM} = sub { exit 0 }; # orderly shutdown when signals received
 
 GetOptions (
-  'delay=i'     => \my $delay,
+  'delay=f'     => \my $delay,
   'h|help|?'    => sub { pod2usage(2) },
   'ip=s'        => \my $target_ip,
   'range=s'     => \my $port_range,
@@ -36,9 +39,6 @@ die "Missing --ip parameter, try --help\n" unless $target_ip;
 die "ip: $target_ip is not a valid ipv4 address\n"
   unless $target_ip =~ /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/;
 
-my $local_ip   = Net::Address::IP::Local->public;
-my $local_port = 55378; # should assign this per child proc, maybe change every req
-
 # determine protocol to use
 $protocol = 'tcp' unless $protocol;
 die "Unknown protocol type, try tcp  or udp\n" unless $protocol =~ /^(?:tcp|udp)$/;
@@ -48,6 +48,17 @@ die "flags are for tcp only!\n" if $protocol ne 'tcp' && @flags;
 $flags[0] = 'syn' unless @flags;
 my $flags = { map { $_ => 1 } @flags };
 $flags = {} if exists $flags->{null};
+
+# get local IP
+my $local_ip   = Net::Address::IP::Local->public;
+
+# find a random free port by opening a socket using the protocol
+my $local_port = do {
+  my $socket = IO::Socket::INET->new(Proto => $protocol, LocalAddr => $local_ip);
+  my $socket_port = $socket->sockport();
+  $socket->close;
+  $socket_port;
+};
 
 # build the port list
 my %port_directory;
@@ -85,7 +96,7 @@ my @ports = do {
   }
 };
 
-print "Starting $protocol scan\n";
+print "Starting $protocol scan from $local_ip:$local_port\n";
 
 # apportion the ports to scan between processes
 $procs ||= 1;
@@ -159,7 +170,7 @@ if ($verbose && $protocol eq 'tcp'
     my $port_name = exists $port_directory{"$port/tcp"}
       ? $port_directory{"$port/tcp"}->{name}
       : '';
-    printf " %5d %-6s %-20s\n", $port, 'open/filtered', $port_name;
+    printf " %5d %-20s %-20s\n", $port, 'open/filtered', $port_name;
   }
 }
 
@@ -199,11 +210,11 @@ sub read_packet
 
     if ($icmp->{code} == 3 && $icmp->{type} == 3)
     {
-      print "received ICMP packet from unknown closed port\n";
+      warn "received ICMP packet from unknown closed port\n";
     }
     else
     {
-      print "received ICMP packet from unknown filtered port\n";
+      warn "received ICMP packet from unknown filtered port\n";
     }
   }
   elsif ($ip_packet->{proto} == 6)
@@ -219,17 +230,17 @@ sub read_packet
     {
       if ($tcp->{flags} & SYN)
       {
-        printf " %5d %-6s %-20s\n", $port, 'open', $port_name;
+        printf " %5d %-20s %-20s\n", $port, 'open', $port_name;
         $total_ports{$port} = 'open';
       }
       elsif ($tcp->{flags} & RST)
       {
-        printf " %5d %-6s %-20s\n", $port, 'closed', $port_name if $verbose;
+        printf " %5d %-20s %-20s\n", $port, 'closed', $port_name if $verbose;
         $total_ports{$port} = 'closed';
       }
       else
       {
-        printf " %5d %-6s %-20s\n", $port, "unknown value $tcp->{flags}", $port_name if $verbose;
+        printf " %5d %-20s %-20s\n", $port, "unknown value $tcp->{flags}", $port_name if $verbose;
       }
     }
     # if we didnt send SYN, ACK or RST, we're looking for RST (closed)
@@ -238,12 +249,12 @@ sub read_packet
     {
       if ($tcp->{flags} & RST)
       {
-        printf " %5d %-6s %-20s\n", $port, 'closed', $port_name if $verbose;
+        printf " %5d %-20s %-20s\n", $port, 'closed', $port_name if $verbose;
         $total_ports{$port} = 'closed';
       }
       else
       {
-        printf " %5d %-6s %-20s\n", $port, "unknown value $tcp->{flags}", $port_name if $verbose;
+        printf " %5d %-20s %-20s\n", $port, "unknown value $tcp->{flags}", $port_name if $verbose;
       }
     }
   }
@@ -254,7 +265,7 @@ sub read_packet
     my $port_name = exists $port_directory{"$port/udp"}
       ? $port_directory{"$port/udp"}->{name}
       : 'unknown';
-    printf " %5d %6s %20s\n", $port, 'open', $port_name;
+    printf " %5d %20s %20s\n", $port, 'open', $port_name;
     $total_ports{$port} = 'open';
   }
 }
@@ -263,7 +274,7 @@ __END__
 
 =head1 NAME
 
-port_scanner - a concurrent tcp syn/udp port scanner
+port_scanner - a concurrent tcp/udp port scanner written in Perl
 
 =head1 SYNOPSIS
 
@@ -272,16 +283,16 @@ port_scanner [options]
  Options:
   --ip,     -i   ip address to scan e.g. 10.30.1.52
   --type    -t   type of protocol to use either tcp or udp (defaults to tcp)
-  --flag    -f   flag to set on tcp (defaults to SYN, use "null" for null flags)
-  --range,  -r   range of ports to scan e.g. 10-857
-  --delay,  -d   seconds to delay each packet send (per process, defaults to 1)
+  --flag    -f   flag to set on tcp (defaults to SYN, use "null" for no flags)
+  --range,  -r   range of ports to scan e.g. 10-857 (search named ports if range not provided)
+  --delay,  -d   seconds to delay each packet send per process. Can be decimal (e.g. 0.5)
   --help,   -h   display this help text
-  --verbose,-v   verbose mode
+  --verbose,-v   verbose mode, print closed and filtered ports
   --procs,  -p   how many concurrent packets to send at a time (defaults to 1)
 
 =head2 Examples
 
-Search the named ports on host C<10.20.1.22>
+Search all the named ports on host C<10.20.1.22>
 
   sudo ./port_scanner -i 10.20.1.22
 
@@ -293,25 +304,47 @@ Search a defined range of ports on host C<10.20.1.22>
 
   sudo ./port_scanner --ip 10.20.1.22 --range 1-1450
 
-Make 5 requests every 2 seconds on ports 20 through 80, print all results
+=head3 Request frequency
 
-  sudo ./port_scanner --ip 10.22.1.22 --range 20-80 --delay 2 --procs 5 --verbose
+C<port_scanner> can make concurrent requests, use the C<procs> and C<delay> to fine tune the request frequency you need.
+
+Make 50 requests every 0.25 seconds print all results
+
+  sudo ./port_scanner --ip 10.22.1.22  --delay 0.25 --procs 50 --verbose
 
 Same thing, with abbreviated parameters
 
-  sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v
+  sudo ./port_scanner -i 10.22.1.22 -d 0.25 -p 50 -v
 
-Same thing, with tcp fin flag set
+=head3 Types of scans
 
-  sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v -f fin
+Perform a TCP SYN scan (default)
 
-Same thing, with tcp and no flags set (aka "null" scan)
+  sudo ./port_scanner -i 10.22.1.22 -f syn
 
-  sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v -f null
+TCP null scan - use C<verbose|v> option to see open/filtered ports
 
-Same thing, with udp
+  sudo ./port_scanner -i 10.22.1.22 -v -f null
 
-  sudo ./port_scanner -i 10.22.1.22 -r 20-80 -d 2 --p 5 -v -t udp
+TCP FIN scan
+
+  sudo ./port_scanner -i 10.22.1.22 -v -f fin
+
+TCP XMAS Scan
+
+  sudo ./port_scanner -i 10.22.1.22 -v -f fin -f psh -f urg
+
+UDP scan
+
+  sudo ./port_scanner -i 10.22.1.22 -v -t udp
+
+=head3 Tips
+
+On Unix-based systems, use the C<procs> option to make concurrent requests, otherwise the scan can take a long time. On Windows, the Perl would need to be compiled with fork() emulation in order for the concurrent requests to work (I think - see C<perldoc perlfork>).
+
+Some firewalls will filter packets if too many are sent - in these cases you may need to reduce the number of procs or increase the C<delay>. C<port_scanner> will warn if it receives ICMP packets which may can indicate flooding and the need to reduce request frequency.
+
+C<port_scanner> defaults to a TCP SYN scan, but vastly different results can be obtained using the other options like C<-f fin>, C<-f null> and C<-t udp>. The target host response will vary (of course) by the host's OS and configuration.
 
 =cut
 
