@@ -73,3 +73,5 @@ for my $host ($scanner->get_interfaces)
     ($host->{netbios}{node} || 'UNKNOWN'),
     ($host->{netbios}{zone} || 'N/A'); # usually not present on OSX
 }
+
+print "\nScan complete\n";
