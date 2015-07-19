@@ -274,7 +274,7 @@ __END__
 
 =head1 NAME
 
-port_scanner - a concurrent tcp/udp port scanner written in Perl
+port_scanner - a concurrent randomized tcp/udp port scanner written in Perl
 
 =head1 SYNOPSIS
 
@@ -322,21 +322,21 @@ Perform a TCP SYN scan (default)
 
   sudo ./port_scanner -i 10.22.1.22 -f syn
 
-TCP null scan - use C<verbose|v> option to see open/filtered ports
+TCP null scan
 
-  sudo ./port_scanner -i 10.22.1.22 -v -f null
+  sudo ./port_scanner -i 10.22.1.22 -f null
 
 TCP FIN scan
 
-  sudo ./port_scanner -i 10.22.1.22 -v -f fin
+  sudo ./port_scanner -i 10.22.1.22 -f fin
 
 TCP XMAS Scan
 
-  sudo ./port_scanner -i 10.22.1.22 -v -f fin -f psh -f urg
+  sudo ./port_scanner -i 10.22.1.22 -f fin -f psh -f urg
 
 UDP scan
 
-  sudo ./port_scanner -i 10.22.1.22 -v -t udp
+  sudo ./port_scanner -i 10.22.1.22 -t udp
 
 =head3 Tips
 
