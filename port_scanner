@@ -45,7 +45,7 @@ die "Unknown protocol type, try tcp  or udp\n" unless $protocol =~ /^(?:tcp|udp)
 
 # set flags (tcp only, default to syn if no flags provided)
 die "flags are for tcp only!\n" if $protocol ne 'tcp' && @flags;
-$flags[0] = 'syn' unless @flags;
+$flags[0] = 'syn' unless @flags || $protocol eq 'udp';
 my $flags = { map { $_ => 1 } @flags };
 $flags = {} if exists $flags->{null};
 
@@ -160,10 +160,9 @@ until (waitpid(-1, WNOHANG) == -1) # until all children exit
   }
 }
 
-# if verbose mode is on, we're using tcp and DIDNT send syn/rst/ack
+# if we're using tcp and DIDNT send syn/rst/ack
 # print the "filtered" ports, as they are "open/filtered"
-if ($verbose && $protocol eq 'tcp'
-    && 0 == grep { /^(?:syn|rst|ack)$/ } keys %$flags)
+if ($protocol eq 'tcp' && 0 == grep { /^(?:syn|rst|ack)$/ } keys %$flags)
 {
   for my $port (sort grep { $total_ports{$_} eq 'filtered' } keys %total_ports)
   {
