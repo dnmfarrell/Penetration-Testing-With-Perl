@@ -8,6 +8,7 @@ use warnings;
 use strict;
 use Getopt::Long;
 use IO::Socket::INET;
+use List::Util 'shuffle';
 use Net::Address::IP::Local;
 use Net::Pcap;
 use Net::RawIP;
@@ -81,7 +82,7 @@ while (<$port_file>)
 }
 
 # use named ports if no range was provided
-my @ports = do {
+my @ports = shuffle do {
   unless ($port_range)
   {
     map { $port_directory{$_}->{port} }
