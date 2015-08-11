@@ -20,8 +20,14 @@ use NetPacket::UDP;
 use POSIX qw/WNOHANG ceil/;
 use Pod::Usage;
 use Time::HiRes 'sleep';
+use Time::Piece;
 
-$SIG{INT} = $SIG{TERM} = sub { exit 0 }; # orderly shutdown when signals received
+# orderly shutdown when signals received
+BEGIN { $SIG{INT} = $SIG{TERM} = sub { exit 0 } }
+
+my $start_time = localtime;
+my $VERSION    = 0.02;
+my $SOURCE     = 'github.com/dnmfarrell/Penetration-Testing-With-Perl';
 
 GetOptions (
   'delay=f'     => \my $delay,
@@ -97,13 +103,26 @@ my @ports = shuffle do {
   }
 };
 
-print "Starting $protocol scan from $local_ip:$local_port\n";
+print "\n$0  Version $VERSION  Source: $SOURCE
+
+$start_time
+
+Starting port scan: type: $protocol, flags: @flags, $procs procs, $delay (secs) delay
+Source host: $local_ip:$local_port, target host: $target_ip\n\n";
 
 # apportion the ports to scan between processes
 $procs ||= 1;
 my $batch_size = ceil(@ports / $procs);
 $delay //= 1; # incase of zero delay
-my %total_ports = map { $_ => 'filtered' } @ports; # for reporting
+
+# if we're using tcp and DIDNT send syn/rst/ack
+# then default status is open/filtered
+my $default_port_status =
+  ($protocol eq 'tcp' && 0 == grep { /^(?:syn|rst|ack)$/ } keys %$flags)
+  ? 'open/filtered'
+  : 'filtered';
+
+my %port_scan_results = map { $_ => $default_port_status } @ports;
 my @child_pids;
 
 for (1..$procs)
@@ -150,10 +169,10 @@ kill CONT => $_ for @child_pids;
 until (waitpid(-1, WNOHANG) == -1) # until all children exit
 {
   my $packet_capture = pcap_next_ex($pcap,\my %header,\my $packet);
-
   if($packet_capture == 1)
   {
-    read_packet($packet);
+    my ($port, $status) = read_packet($packet);
+    $port_scan_results{$port} = $status;
   }
   elsif ($packet_capture == -1)
   {
@@ -161,24 +180,22 @@ until (waitpid(-1, WNOHANG) == -1) # until all children exit
   }
 }
 
-# if we're using tcp and DIDNT send syn/rst/ack
-# print the "filtered" ports, as they are "open/filtered"
-if ($protocol eq 'tcp' && 0 == grep { /^(?:syn|rst|ack)$/ } keys %$flags)
+my $end_time = localtime;
+my $duration = $end_time - $start_time;
+
+for (sort { $a <=> $b } keys %port_scan_results)
 {
-  for my $port (sort grep { $total_ports{$_} eq 'filtered' } keys %total_ports)
-  {
-    my $port_name = exists $port_directory{"$port/tcp"}
-      ? $port_directory{"$port/tcp"}->{name}
-      : '';
-    printf " %5d %-20s %-20s\n", $port, 'open/filtered', $port_name;
-  }
+  printf " %5u %-15s %-40s\n", $_, $port_scan_results{$_}, ($port_directory{"$_/$protocol"}->{name} || '')
+    if $port_scan_results{$_} =~ /open/ || $verbose;
 }
 
-printf "\n %d ports scanned, %d filtered, %d closed, %d open\n",
-  scalar(keys %total_ports),
-  scalar(grep { $total_ports{$_} eq 'filtered' } keys %total_ports),
-  scalar(grep { $total_ports{$_} eq 'closed'   } keys %total_ports),
-  scalar(grep { $total_ports{$_} eq 'open'     } keys %total_ports);
+printf "\nScan duration: %u seconds\n%d ports scanned, %d filtered, %d closed, %d open\n\n",
+  $duration,
+  scalar(keys %port_scan_results),
+  scalar(grep { $port_scan_results{$_} eq 'filtered' } keys %port_scan_results),
+  scalar(grep { $port_scan_results{$_} eq 'closed'   } keys %port_scan_results),
+  # includes open/filtered
+  scalar(grep { $port_scan_results{$_} =~ /open/     } keys %port_scan_results);
 
 END { pcap_close($pcap) if $pcap }
 
@@ -221,27 +238,19 @@ sub read_packet
   {
     my $tcp = NetPacket::TCP->decode(NetPacket::IP::strip($ip_data));
     my $port = $tcp->{src_port};
-    my $port_name = exists $port_directory{"$port/tcp"}
-      ? $port_directory{"$port/tcp"}->{name}
-      : '';
 
     # we sent SYN, we're looking for ACK/SYN and RST
     if (exists $flags->{syn})
     {
       if ($tcp->{flags} & SYN)
       {
-        printf " %5d %-20s %-20s\n", $port, 'open', $port_name;
-        $total_ports{$port} = 'open';
+        return ($port, 'open');
       }
       elsif ($tcp->{flags} & RST)
       {
-        printf " %5d %-20s %-20s\n", $port, 'closed', $port_name if $verbose;
-        $total_ports{$port} = 'closed';
+        return ($port, 'closed');
       }
-      else
-      {
-        printf " %5d %-20s %-20s\n", $port, "unknown value $tcp->{flags}", $port_name if $verbose;
-      }
+      return ($port, 'unknown');
     }
     # if we didnt send SYN, ACK or RST, we're looking for RST (closed)
     # no response at all indicates open/filtered
@@ -249,24 +258,16 @@ sub read_packet
     {
       if ($tcp->{flags} & RST)
       {
-        printf " %5d %-20s %-20s\n", $port, 'closed', $port_name if $verbose;
-        $total_ports{$port} = 'closed';
+        return ($port, 'closed');
       }
-      else
-      {
-        printf " %5d %-20s %-20s\n", $port, "unknown value $tcp->{flags}", $port_name if $verbose;
-      }
+      return ($port, 'unknown');
     }
   }
   elsif ($ip_packet->{proto} == 17)
   {
     my $udp = NetPacket::UDP->decode(NetPacket::IP::strip($ip_data));
     my $port = $udp->{src_port};
-    my $port_name = exists $port_directory{"$port/udp"}
-      ? $port_directory{"$port/udp"}->{name}
-      : 'unknown';
-    printf " %5d %20s %20s\n", $port, 'open', $port_name;
-    $total_ports{$port} = 'open';
+    return ($port, 'open');
   }
 }
 
