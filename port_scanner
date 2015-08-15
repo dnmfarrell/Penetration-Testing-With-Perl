@@ -30,14 +30,14 @@ my $VERSION    = 0.02;
 my $SOURCE     = 'github.com/dnmfarrell/Penetration-Testing-With-Perl';
 
 GetOptions (
-  'delay=f'     => \my $delay,
+  'delay=f'     => \(my $delay = 1),
+  'ip=s'        => \ my $target_ip,
+  'range=s'     => \ my $port_range,
+  'procs=i'     => \(my $procs = 50),
+  'type=s'      => \(my $protocol = 'tcp'),
+  'flag=s'      => \ my @flags,
+  'verbose'     => \ my $verbose,
   'h|help|?'    => sub { pod2usage(2) },
-  'ip=s'        => \my $target_ip,
-  'range=s'     => \my $port_range,
-  'procs=i'     => \my $procs,
-  'type=s'      => \my $protocol,
-  'flag=s'      => \my @flags,
-  'verbose'     => \my $verbose,
 );
 
 # validate required args are given
@@ -47,8 +47,7 @@ die "ip: $target_ip is not a valid ipv4 address\n"
   unless $target_ip =~ /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/;
 
 # determine protocol to use
-$protocol = 'tcp' unless $protocol;
-die "Unknown protocol type, try tcp  or udp\n" unless $protocol =~ /^(?:tcp|udp)$/;
+die "Unknown protocol type, try tcp or udp\n" unless $protocol =~ /^(?:tcp|udp)$/;
 
 # set flags (tcp only, default to syn if no flags provided)
 die "flags are for tcp only!\n" if $protocol ne 'tcp' && @flags;
@@ -57,7 +56,7 @@ my $flags = { map { $_ => 1 } @flags };
 $flags = {} if exists $flags->{null};
 
 # get local IP
-my $local_ip   = Net::Address::IP::Local->public;
+my $local_ip = Net::Address::IP::Local->public;
 
 # find a random free port by opening a socket using the protocol
 my $local_port = do {
@@ -111,9 +110,7 @@ Starting port scan: type: $protocol, flags: @flags, $procs procs, $delay (secs) 
 Source host: $local_ip:$local_port, target host: $target_ip\n\n";
 
 # apportion the ports to scan between processes
-$procs ||= 1;
 my $batch_size = ceil(@ports / $procs);
-$delay //= 1; # incase of zero delay
 
 # if we're using tcp and DIDNT send syn/rst/ack
 # then default status is open/filtered
@@ -172,7 +169,7 @@ until (waitpid(-1, WNOHANG) == -1) # until all children exit
   if($packet_capture == 1)
   {
     my ($port, $status) = read_packet($packet);
-    $port_scan_results{$port} = $status;
+    $port_scan_results{$port} = $status if $port;
   }
   elsif ($packet_capture == -1)
   {
@@ -221,53 +218,30 @@ sub read_packet
   my $ip_data = NetPacket::Ethernet::strip($raw_data);
   my $ip_packet = NetPacket::IP->decode($ip_data);
 
-  if ($ip_packet->{proto} == 1)
-  {
-    my $icmp = NetPacket::ICMP->decode(NetPacket::IP::strip($ip_data));
-
-    if ($icmp->{code} == 3 && $icmp->{type} == 3)
-    {
-      warn "received ICMP packet from unknown closed port\n";
-    }
-    else
-    {
-      warn "received ICMP packet from unknown filtered port\n";
-    }
-  }
-  elsif ($ip_packet->{proto} == 6)
+  if ($ip_packet->{proto} == 6)
   {
     my $tcp = NetPacket::TCP->decode(NetPacket::IP::strip($ip_data));
     my $port = $tcp->{src_port};
 
-    # we sent SYN, we're looking for ACK/SYN and RST
-    if (exists $flags->{syn})
+    if ($tcp->{flags} & SYN)
     {
-      if ($tcp->{flags} & SYN)
-      {
-        return ($port, 'open');
-      }
-      elsif ($tcp->{flags} & RST)
-      {
-        return ($port, 'closed');
-      }
-      return ($port, 'unknown');
+      return ($port, 'open');
     }
-    # if we didnt send SYN, ACK or RST, we're looking for RST (closed)
-    # no response at all indicates open/filtered
-    unless (grep { /^(?:syn|rst|ack)$/ } keys %$flags)
+    elsif ($tcp->{flags} & RST)
     {
-      if ($tcp->{flags} & RST)
-      {
-        return ($port, 'closed');
-      }
-      return ($port, 'unknown');
+      return ($port, 'closed');
     }
+    return ($port, 'unknown');
   }
   elsif ($ip_packet->{proto} == 17)
   {
     my $udp = NetPacket::UDP->decode(NetPacket::IP::strip($ip_data));
     my $port = $udp->{src_port};
     return ($port, 'open');
+  }
+  else
+  {
+    warn "Received unknown packet protocol: $ip_packet->{proto}\n";
   }
 }
 
