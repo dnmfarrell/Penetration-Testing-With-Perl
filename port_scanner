@@ -26,7 +26,7 @@ use Time::Piece;
 BEGIN { $SIG{INT} = $SIG{TERM} = sub { exit 0 } }
 
 my $start_time = localtime;
-my $VERSION    = 0.02;
+my $VERSION    = 0.03;
 my $SOURCE     = 'github.com/dnmfarrell/Penetration-Testing-With-Perl';
 
 GetOptions (
@@ -38,13 +38,16 @@ GetOptions (
   'flag=s'      => \ my @flags,
   'verbose'     => \ my $verbose,
   'h|help|?'    => sub { pod2usage(2) },
-);
+) or pod2usage(2);
 
 # validate required args are given
 die "Missing --ip parameter, try --help\n" unless $target_ip;
 
 die "ip: $target_ip is not a valid ipv4 address\n"
   unless $target_ip =~ /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/;
+
+# must be run with root privileges for (packet capture)
+die "Must run with root privileges\n" if $> != 0;
 
 # determine protocol to use
 die "Unknown protocol type, try tcp or udp\n" unless $protocol =~ /^(?:tcp|udp)$/;
